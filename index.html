@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cute Halloween 3D Diorama | Interactive Experience</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎃</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- WebGL Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="loader-content">
+      <div class="ghost-loader">
+        <div class="loader-ghost-body">
+          <div class="loader-eyes">
+            <span></span><span></span>
+          </div>
+          <div class="loader-mouth"></div>
+        </div>
+      </div>
+      <h2>Brewing Halloween Magic...</h2>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <p class="loader-hint">Sculpting cute trees, stars, and nocturnal friends</p>
+    </div>
+  </div>
+
+  <!-- Minimal, unobtrusive corner controls -->
+  <header class="hud-header">
+    <div class="hud-controls">
+      <button id="btn-audio" class="hud-btn hud-btn-minimal" title="Sound Effects" aria-label="Toggle Sound Effects">
+        <span class="btn-icon" id="audio-icon">🔇</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Gentle temporary hint banner (auto-fades) -->
+  <div class="interactive-hint" id="interactive-hint">
+    <span class="hint-sparkle">✨</span>
+    <span>Click the kitten, ghost, or glowing tree</span>
+  </div>
+
+  <!-- Floating Feedback Tooltip for Raycast clicks -->
+  <div id="click-toast" class="click-toast"></div>
+
+  <!-- Scripts -->
+  <!-- Local Three.js r128 with CDN fallback -->
+  <script src="js/libs/three.min.js"></script>
+  <script src="js/libs/OrbitControls.js"></script>
+  
+  <!-- Diorama Modules -->
+  <script src="js/audio.js"></script>
+  <script src="js/effects/sparkles.js"></script>
+  <script src="js/scene/lighting.js"></script>
+  <script src="js/scene/sky.js"></script>
+  <script src="js/characters/cat.js"></script>
+  <script src="js/characters/ghost.js"></script>
+  <script src="js/scene/environment.js"></script>
+  <script src="js/interaction.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
