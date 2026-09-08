@@ -9,10 +9,23 @@ class DioramaEnvironment {
     this.scene = scene;
     this.clickableLanterns = [];
     this.leafMeshes = [];
+    this.ghost = null;
+    this.ghostWorldPosition = new THREE.Vector3();
+    this.ghostShadowGroundLift = 0.025;
+    this.ghostShadowBaseScale = 1.0;
+    this.ghostShadowBaseOpacity = 0.68;
+    this.ghostShadowBaseHoverHeight = null;
+    this.lighting = null;
+    this.lanternHoverAmount = 0;
+    this.lanternHoverTarget = 0;
+    this.lanternFlareHold = 0;
+    this.lanternFlareAmount = 0;
+    this.lanternHalos = [];
+    this.lanternCores = [];
 
     this.initMaterials();
     this.buildGroundHill();
-    this.buildShadowDecals();   // Soft contact shadows for cat and ghost
+    this.buildShadowDecals();   // Soft contact shadows for characters, trees, and boulders
     this.buildHeroTree();       // Left tree with glowing hollows & bat
     this.buildMiddleTree();     // Middle sage green tree
     this.buildPurpleTree();     // Right whimsical purple gourd tree
@@ -23,11 +36,37 @@ class DioramaEnvironment {
     this.buildBackgroundPines(); // Distant pine tree silhouettes
   }
 
+  setLighting(lighting) {
+    this.lighting = lighting;
+  }
+
+  setLanternHovered(isHovered) {
+    this.lanternHoverTarget = isHovered ? 1.0 : 0.0;
+    if (this.lighting && typeof this.lighting.setLanternHovered === 'function') {
+      this.lighting.setLanternHovered(isHovered);
+    }
+  }
+
+  triggerLanternFlare() {
+    this.lanternFlareHold = 0.35;
+    if (this.lighting && typeof this.lighting.triggerLanternFlare === 'function') {
+      this.lighting.triggerLanternFlare();
+    }
+  }
+
   initMaterials() {
-    // Rich deep nocturnal forest/moss green matching reference
+    // Rich deep nocturnal terrain material with vertex colors enabled
+    this.terrainMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.92,
+      metalness: 0.02
+    });
+
+    // Stylized grass blade tufts material
     this.grassMat = new THREE.MeshStandardMaterial({
-      color: 0x1b3813,
-      roughness: 0.95,
+      color: 0x224719,
+      roughness: 0.92,
       metalness: 0.02
     });
 
@@ -104,6 +143,23 @@ class DioramaEnvironment {
     });
   }
 
+  // Soft warm gold/amber radial glow halo texture for tree hollow lantern eyes
+  createLanternHaloTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+    grad.addColorStop(0, 'rgba(255, 224, 130, 0.95)');
+    grad.addColorStop(0.28, 'rgba(255, 160, 40, 0.62)');
+    grad.addColorStop(0.6, 'rgba(255, 110, 20, 0.24)');
+    grad.addColorStop(0.85, 'rgba(255, 70, 10, 0.06)');
+    grad.addColorStop(1, 'rgba(255, 40, 0, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(canvas);
+  }
+
   // Accurate surface height calculation on the curved hill
   getHillHeight(x, z) {
     const dist = Math.sqrt(x * x + z * z);
@@ -123,15 +179,70 @@ class DioramaEnvironment {
     const rings = 48;
     const sectors = 72;
     const maxRadius = 14.5;
+    const skirtSteps = 4;
 
     const positions = [];
     const uvs = [];
+    const colors = [];
     const indices = [];
+
+    // Helper to calculate top surface vertex colors matching storybook nocturnal identity
+    const baseDark = [0.1098, 0.2314, 0.0784]; // #1c3b14 rich nocturnal dark moss
+    const baseRich = [0.1333, 0.2784, 0.0980]; // #224719 rich mid moss
+    const crestColor = [0.1804, 0.3804, 0.1373]; // #2e6123 lighter/richer moss at crests
+    const oliveBrown = [0.1569, 0.1333, 0.0784]; // #282214 earthy olive-brown
+    const edgeDarkBrown = [0.1176, 0.0941, 0.0510]; // #1e180d deeper edge brown
+    const heroGlow = [0.4471, 0.3294, 0.1412]; // #725424 warm golden amber lantern pooling
+    const purpleGlow = [0.3373, 0.2275, 0.2275]; // #563a3a warm amber-violet pooling
+
+    const lerpColorArr = (c1, c2, t) => [
+      c1[0] + (c2[0] - c1[0]) * t,
+      c1[1] + (c2[1] - c1[1]) * t,
+      c1[2] + (c2[2] - c1[2]) * t
+    ];
+
+    const getTopColor = (x, y, z, radius) => {
+      // 1. Elevation and subtle macro variation
+      const heightT = Math.min(1.0, Math.max(0.0, (y - (-0.2)) / 1.1));
+      const macroNoise = Math.sin(x * 0.35 + z * 0.3) * 0.03;
+      let c = lerpColorArr(baseDark, baseRich, Math.min(1.0, Math.max(0.0, 0.45 + heightT * 0.4 + macroNoise)));
+
+      // Lighter/richer moss green at higher elevations and crests
+      if (heightT > 0.4) {
+        c = lerpColorArr(c, crestColor, (heightT - 0.4) * 0.5);
+      }
+
+      // 2. Subtle warm tint near the hero tree lantern (x: -3.85, z: 2.1)
+      const dHero = Math.hypot(x - (-3.85), z - 2.1);
+      if (dHero < 4.6) {
+        const poolHero = Math.pow(Math.max(0, 1.0 - dHero / 4.6), 1.6) * 0.35;
+        c = lerpColorArr(c, heroGlow, poolHero);
+      }
+
+      // Subtle warm tint near the right purple tree lantern (x: 4.2, z: 0.2)
+      const dPurple = Math.hypot(x - 4.2, z - 0.2);
+      if (dPurple < 4.2) {
+        const poolPurple = Math.pow(Math.max(0, 1.0 - dPurple / 4.2), 1.6) * 0.28;
+        c = lerpColorArr(c, purpleGlow, poolPurple);
+      }
+
+      // 3. Edge transition: towards outer radius (r > 12.0), transition from moss green
+      // to deeper earthy olive-brown (#282214 / #1e180d) to avoid an artificial sharp seam
+      if (radius > 11.5) {
+        const edgeT = Math.min(1.0, (radius - 11.5) / 3.0);
+        const smoothEdge = edgeT * edgeT * (3.0 - 2.0 * edgeT);
+        const targetEdge = lerpColorArr(oliveBrown, edgeDarkBrown, edgeT);
+        c = lerpColorArr(c, targetEdge, smoothEdge);
+      }
+
+      return c;
+    };
 
     // Center vertex
     const centerH = this.getHillHeight(0, 0);
     positions.push(0, centerH, 0);
     uvs.push(0.5, 0.5);
+    colors.push(...getTopColor(0, centerH, 0, 0));
 
     // Radial concentric rings
     for (let r = 1; r <= rings; r++) {
@@ -144,6 +255,7 @@ class DioramaEnvironment {
 
         positions.push(x, y, z);
         uvs.push((x / (maxRadius * 2)) + 0.5, (z / (maxRadius * 2)) + 0.5);
+        colors.push(...getTopColor(x, y, z, radius));
       }
     }
 
@@ -171,67 +283,112 @@ class DioramaEnvironment {
       }
     }
 
-    // Edge cliff skirt extending downward to y = -5.0 for clean floating island finish
-    const skirtStartIndex = positions.length / 3;
-    const outerRingStart = 1 + (rings - 1) * sectors;
-    for (let s = 0; s < sectors; s++) {
-      const theta = (s / sectors) * Math.PI * 2;
-      const x = Math.cos(theta) * maxRadius;
-      const z = Math.sin(theta) * maxRadius;
-      positions.push(x, -5.0, z);
-      uvs.push((x / (maxRadius * 2)) + 0.5, (z / (maxRadius * 2)) + 0.5);
-    }
+    // Island Edge / Underside (skirt):
+    // Transition from the rim downward to y = -5.0 with dark rich earth brown (#241910),
+    // mid skirt muted slate/strata (#181720), and bottom deep midnight shadow (#080a14)
+    // with subtle organic perimeter strata variation for a miniature diorama cross-section.
+    const skirtTopColor = [0.1412, 0.0980, 0.0627]; // #241910
+    const skirtMidColor = [0.0941, 0.0902, 0.1255]; // #181720
+    const skirtBotColor = [0.0314, 0.0392, 0.0784]; // #080a14
 
-    for (let s = 0; s < sectors; s++) {
-      const nextS = (s + 1) % sectors;
-      const top0 = outerRingStart + s;
-      const top1 = outerRingStart + nextS;
-      const bot0 = skirtStartIndex + s;
-      const bot1 = skirtStartIndex + nextS;
+    let previousRingStart = 1 + (rings - 1) * sectors;
+    for (let step = 1; step <= skirtSteps; step++) {
+      const v = step / skirtSteps;
+      const stepStart = positions.length / 3;
 
-      indices.push(top0, bot0, bot1);
-      indices.push(top0, bot1, top1);
+      const cSkirt = v < 0.45 ? lerpColorArr(skirtTopColor, skirtMidColor, v / 0.45)
+                              : lerpColorArr(skirtMidColor, skirtBotColor, (v - 0.45) / 0.55);
+
+      for (let s = 0; s < sectors; s++) {
+        const theta = (s / sectors) * Math.PI * 2;
+        const rimX = Math.cos(theta) * maxRadius;
+        const rimZ = Math.sin(theta) * maxRadius;
+        const rimY = this.getHillHeight(rimX, rimZ);
+
+        const y = rimY + (-5.0 - rimY) * v;
+        const strataNoise = Math.sin(theta * 6.0 + v * 3.5) * 0.18 + Math.cos(theta * 9.0) * 0.12;
+        const taper = 1.0 - 0.08 * v;
+        const skirtRadius = (maxRadius + strataNoise) * taper;
+        const x = Math.cos(theta) * skirtRadius;
+        const z = Math.sin(theta) * skirtRadius;
+
+        positions.push(x, y, z);
+        uvs.push((x / (maxRadius * 2)) + 0.5, (z / (maxRadius * 2)) + 0.5);
+        colors.push(...cSkirt);
+      }
+
+      for (let s = 0; s < sectors; s++) {
+        const nextS = (s + 1) % sectors;
+        const top0 = previousRingStart + s;
+        const top1 = previousRingStart + nextS;
+        const bot0 = stepStart + s;
+        const bot1 = stepStart + nextS;
+
+        indices.push(top0, bot0, bot1);
+        indices.push(top0, bot1, top1);
+      }
+
+      previousRingStart = stepStart;
     }
 
     const groundGeo = new THREE.BufferGeometry();
     groundGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     groundGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    groundGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     groundGeo.setIndex(indices);
     groundGeo.computeVertexNormals();
 
-    this.groundMesh = new THREE.Mesh(groundGeo, this.grassMat);
+    this.groundMesh = new THREE.Mesh(groundGeo, this.terrainMat);
     this.groundMesh.position.set(0, 0, 0);
     this.groundMesh.receiveShadow = true;
     this.scene.add(this.groundMesh);
   }
 
+  // Soft radial shadow texture generator (reused across all scene contact shadows)
+  createShadowTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+    grad.addColorStop(0, 'rgba(8, 14, 8, 1.0)');
+    grad.addColorStop(0.35, 'rgba(8, 14, 8, 0.78)');
+    grad.addColorStop(0.65, 'rgba(8, 14, 8, 0.35)');
+    grad.addColorStop(0.85, 'rgba(8, 14, 8, 0.12)');
+    grad.addColorStop(1, 'rgba(8, 14, 8, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(canvas);
+  }
+
   // -------------------------------------------------------------
-  // Contact Shadows for Seated Cat and Hovering Ghost
+  // Contact Shadows for Characters, Iconic Trees, and Boulders
   // -------------------------------------------------------------
   buildShadowDecals() {
     this.shadowsGroup = new THREE.Group();
+    const shadowTexture = this.createShadowTexture();
 
-    const createShadowTexture = (maxOpacity = 0.65) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 128;
-      canvas.height = 128;
-      const ctx = canvas.getContext('2d');
-      const grad = ctx.createRadialGradient(64, 64, 8, 64, 64, 62);
-      grad.addColorStop(0, `rgba(8, 14, 8, ${maxOpacity})`);
-      grad.addColorStop(0.45, `rgba(8, 14, 8, ${maxOpacity * 0.65})`);
-      grad.addColorStop(0.8, `rgba(8, 14, 8, ${maxOpacity * 0.18})`);
-      grad.addColorStop(1, 'rgba(8, 14, 8, 0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 128, 128);
-      return new THREE.CanvasTexture(canvas);
+    const addDecal = (x, z, width, length, opacity, yOffset = 0.025, rotY = 0) => {
+      const geo = new THREE.PlaneGeometry(width, length);
+      geo.rotateX(-Math.PI * 0.5);
+      const mat = new THREE.MeshBasicMaterial({
+        map: shadowTexture,
+        transparent: true,
+        depthWrite: false,
+        opacity: opacity
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, this.getHillHeight(x, z) + yOffset, z);
+      if (rotY !== 0) mesh.rotation.y = rotY;
+      this.shadowsGroup.add(mesh);
+      return mesh;
     };
 
     // 1. Cat Contact Shadow Decal (Paws seated on grass)
-    const catTex = createShadowTexture(0.72);
     const catShadowGeo = new THREE.PlaneGeometry(1.65, 1.45);
     catShadowGeo.rotateX(-Math.PI * 0.5);
     const catShadowMat = new THREE.MeshBasicMaterial({
-      map: catTex,
+      map: shadowTexture,
       transparent: true,
       depthWrite: false,
       opacity: 0.88
@@ -242,22 +399,70 @@ class DioramaEnvironment {
     this.catShadow.rotation.y = 0.2;
     this.shadowsGroup.add(this.catShadow);
 
-    // 2. Ghost Soft Hover Shadow Decal
-    const ghostTex = createShadowTexture(0.55);
+    // 2. Ghost Soft Hover Shadow Decal (Dynamic height scaling in updateGhostShadow)
     const ghostShadowGeo = new THREE.PlaneGeometry(2.3, 2.3);
     ghostShadowGeo.rotateX(-Math.PI * 0.5);
     this.ghostShadowMat = new THREE.MeshBasicMaterial({
-      map: ghostTex,
+      map: shadowTexture,
       transparent: true,
       depthWrite: false,
       opacity: 0.68
     });
     this.ghostShadow = new THREE.Mesh(ghostShadowGeo, this.ghostShadowMat);
-    const ghostY = this.getHillHeight(2.4, 1.8) + 0.025;
-    this.ghostShadow.position.set(2.4, ghostY, 1.8);
+    const ghostY = this.getHillHeight(2.2, 2.3) + this.ghostShadowGroundLift;
+    this.ghostShadow.position.set(2.2, ghostY, 2.3);
     this.shadowsGroup.add(this.ghostShadow);
 
+    // 3. Hero Tree / Root Mass:
+    // Broad subtle root-zone shadow decal (radius ~4.8 -> 9.6 x 9.6, opacity ~0.52)
+    addDecal(-4.0, 0.4, 9.6, 9.6, 0.52, 0.024);
+    // Localized trunk core contact patch (radius ~2.4 -> 4.8 x 4.8, opacity ~0.40) centered under main root flares
+    addDecal(-3.95, 0.4, 4.8, 4.8, 0.40, 0.026);
+
+    // 4. Purple Tree:
+    // Soft grounding decal under trunk base (x: 4.2, z: 0.4, scale ~3.8 x 3.5, opacity ~0.48)
+    addDecal(4.2, 0.4, 3.8, 3.5, 0.48, 0.025);
+
+    // 5. Middle Tree:
+    // Soft grounding decal under trunk base (x: 0.8, z: -0.6, scale ~2.4 x 2.2, opacity ~0.42)
+    addDecal(0.8, -0.6, 2.4, 2.2, 0.42, 0.025);
+
+    // 6. Foreground Boulders / Rock Clusters:
+    // Left boulder cluster (x: -2.1, z: 4.3, scale ~2.0 x 1.4, opacity ~0.42)
+    addDecal(-2.1, 4.3, 2.0, 1.4, 0.42, 0.025, 0.35);
+    // Right boulder cluster (x: 2.2, z: 3.8, scale ~2.4 x 1.6, opacity ~0.42)
+    addDecal(2.2, 3.8, 2.4, 1.6, 0.42, 0.025, -0.4);
+
     this.scene.add(this.shadowsGroup);
+  }
+
+  setGhost(ghost) {
+    this.ghost = ghost;
+    this.ghostShadowBaseHoverHeight = null;
+    this.updateGhostShadow();
+  }
+
+  updateGhostShadow() {
+    if (!this.ghostShadow || !this.ghost || !this.ghost.group) return;
+
+    this.ghost.group.getWorldPosition(this.ghostWorldPosition);
+    const x = this.ghostWorldPosition.x;
+    const z = this.ghostWorldPosition.z;
+    const groundY = this.getHillHeight(x, z) + this.ghostShadowGroundLift;
+    const hoverHeight = Math.max(0, this.ghostWorldPosition.y - groundY);
+
+    if (this.ghostShadowBaseHoverHeight === null) {
+      this.ghostShadowBaseHoverHeight = hoverHeight;
+    }
+
+    // Keep the response subtle: a higher ghost spreads and fades its decal,
+    // while a lower ghost tightens and darkens it around the terrain contact.
+    const heightDelta = hoverHeight - this.ghostShadowBaseHoverHeight;
+    const scale = THREE.MathUtils.clamp(this.ghostShadowBaseScale * (1 + heightDelta * 0.1), 0.82, 1.2);
+    const opacity = THREE.MathUtils.clamp(this.ghostShadowBaseOpacity - heightDelta * 0.05, 0.45, 0.78);
+    this.ghostShadow.position.set(x, groundY, z);
+    this.ghostShadow.scale.setScalar(scale);
+    this.ghostShadowMat.opacity = opacity;
   }
 
   // -------------------------------------------------------------
@@ -310,6 +515,10 @@ class DioramaEnvironment {
     // ---------------------------------------------------------
     // Two Carved Glowing Lantern Hollow Eyes in Upper Trunk!
     // ---------------------------------------------------------
+    if (!this.haloTexture) {
+      this.haloTexture = this.createLanternHaloTexture();
+    }
+
     const lanternGroup = new THREE.Group();
     // Positioned front and center of upper trunk facing viewer
     lanternGroup.position.set(0.1, 2.75, 1.48);
@@ -339,6 +548,23 @@ class DioramaEnvironment {
       const core = new THREE.Mesh(coreGeo, this.lanternCoreMat);
       core.position.z = 0.04;
       eyeHollow.add(core);
+
+      // Soft warm radial glow halo plane behind/around hollow eye
+      const haloGeo = new THREE.PlaneGeometry(0.85, 1.15);
+      const haloMat = new THREE.MeshBasicMaterial({
+        map: this.haloTexture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 0.58,
+        color: 0xffcc44
+      });
+      const halo = new THREE.Mesh(haloGeo, haloMat);
+      halo.position.z = 0.07;
+      eyeHollow.add(halo);
+
+      this.lanternHalos.push(halo);
+      this.lanternCores.push(core);
 
       eyeHollow.position.set(sign * 0.46, 0, 0);
       eyeHollow.rotation.y = sign * 0.16;
@@ -953,13 +1179,54 @@ class DioramaEnvironment {
       leaf.rotation.z += Math.sin(elapsed * 1.5 + i) * 0.0008;
     }
 
-    // Ghost shadow responds smoothly to floating bobbing
-    if (this.ghostShadow) {
-      const hoverPulse = Math.sin(elapsed * 2.0) * 0.08;
-      this.ghostShadow.scale.setScalar(1.0 - hoverPulse * 0.5);
-      if (this.ghostShadowMat) {
-        this.ghostShadowMat.opacity = 0.65 - hoverPulse * 0.15;
+    this.updateGhostShadow();
+
+    // Hover smoothing for lantern (~15% brightness boost)
+    this.lanternHoverAmount += (this.lanternHoverTarget - this.lanternHoverAmount) * Math.min(1, delta * 6.0);
+
+    // Click flare envelope decay
+    if (this.lanternFlareHold > 0) {
+      this.lanternFlareHold = Math.max(0, this.lanternFlareHold - delta);
+      this.lanternFlareAmount += (1.0 - this.lanternFlareAmount) * Math.min(1, delta * 8.0);
+    } else {
+      this.lanternFlareAmount += (0.0 - this.lanternFlareAmount) * Math.min(1, delta * 2.4);
+    }
+
+    // Retrieve synchronized glow factor from lighting module if available, or standalone fallback
+    let glowFactor = 1.0;
+    if (this.lighting && typeof this.lighting.getLanternGlowFactor === 'function') {
+      glowFactor = this.lighting.getLanternGlowFactor();
+    } else {
+      const breath = Math.sin(elapsed * 4.6) * 0.075;
+      const hoverFactor = 1.0 + this.lanternHoverAmount * 0.15;
+      glowFactor = (1.0 + breath) * hoverFactor + this.lanternFlareAmount * 1.35;
+    }
+
+    // Subtle breathing pulse scale (~3-5%)
+    const pulseScale = 1.0 + (glowFactor - 1.0) * 0.08 + Math.sin(elapsed * 4.6) * 0.025;
+
+    // Update soft warm halos
+    for (let i = 0; i < this.lanternHalos.length; i++) {
+      const halo = this.lanternHalos[i];
+      halo.scale.set(pulseScale, pulseScale, pulseScale);
+      if (halo.material) {
+        halo.material.opacity = Math.min(0.95, 0.58 * glowFactor);
       }
+    }
+
+    // Update glowing flame bulb cores
+    for (let i = 0; i < this.lanternCores.length; i++) {
+      const core = this.lanternCores[i];
+      core.scale.set(0.85 * pulseScale, 1.25 * pulseScale, 0.7 * pulseScale);
+    }
+
+    if (this.lanternCoreMat) {
+      const boost = Math.min(1.45, Math.max(0.7, glowFactor));
+      this.lanternCoreMat.color.setRGB(
+        Math.min(1.0, 1.0 * boost),
+        Math.min(1.0, 0.72 * boost),
+        Math.min(1.0, 0.20 * boost)
+      );
     }
   }
 }

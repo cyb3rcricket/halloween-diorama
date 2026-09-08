@@ -11,6 +11,8 @@ class SoundManager {
     this.isMuted = true; // Starts muted until user enables or interacts
     this.isInitialized = false;
     this.ambientNodes = [];
+    this.masterLevel = 0.8;
+    this.ambientLevel = 0.15;
   }
 
   init() {
@@ -22,11 +24,11 @@ class SoundManager {
 
       this.ctx = new AudioContextClass();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : 0.8, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.masterLevel, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
 
       this.ambientGain = this.ctx.createGain();
-      this.ambientGain.gain.setValueAtTime(this.isMuted ? 0 : 0.15, this.ctx.currentTime);
+      this.ambientGain.gain.setValueAtTime(this.isMuted ? 0 : this.ambientLevel, this.ctx.currentTime);
       this.ambientGain.connect(this.masterGain);
 
       this.isInitialized = true;
@@ -47,16 +49,28 @@ class SoundManager {
     this.isMuted = !this.isMuted;
 
     if (this.masterGain && this.ctx) {
-      const t = this.ctx.currentTime;
-      this.masterGain.gain.cancelScheduledValues(t);
-      this.masterGain.gain.linearRampToValueAtTime(this.isMuted ? 0 : 0.8, t + 0.05);
-
       if (!this.isMuted && this.ambientNodes.length === 0) {
         this.startAmbience();
       }
+
+      this.rampGain(this.masterGain, this.isMuted ? 0 : this.masterLevel);
+      this.rampGain(this.ambientGain, this.isMuted ? 0 : this.ambientLevel);
     }
 
     return !this.isMuted;
+  }
+
+  rampGain(gainNode, target, duration = 0.08) {
+    if (!gainNode || !this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    if (typeof gainNode.gain.cancelAndHoldAtTime === 'function') {
+      gainNode.gain.cancelAndHoldAtTime(now);
+    } else {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+    }
+    gainNode.gain.linearRampToValueAtTime(target, now + duration);
   }
 
   // Cute Kitten Meow!

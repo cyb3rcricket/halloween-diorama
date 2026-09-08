@@ -170,9 +170,6 @@ class SkySystem {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
-    const sizes = new Float32Array(count);
-    this.starFrequencies = new Float32Array(count);
-    this.starPhases = new Float32Array(count);
 
     const colorWhite = new THREE.Color(0xffffff);
     const colorGold = new THREE.Color(0xfff1c2);
@@ -195,14 +192,10 @@ class SkySystem {
       colors[i * 3 + 1] = chosenColor.g;
       colors[i * 3 + 2] = chosenColor.b;
 
-      sizes[i] = 0.8 + Math.random() * 1.6;
-      this.starFrequencies[i] = 1.2 + Math.random() * 3.5;
-      this.starPhases[i] = Math.random() * Math.PI * 2;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     // Star texture with glint
     const canvas = document.createElement('canvas');
@@ -219,6 +212,7 @@ class SkySystem {
 
     const starTexture = new THREE.CanvasTexture(canvas);
 
+    this.starBaseOpacity = 0.92;
     const material = new THREE.PointsMaterial({
       size: 1.4,
       vertexColors: true,
@@ -226,7 +220,8 @@ class SkySystem {
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      fog: false
+      fog: false,
+      opacity: this.starBaseOpacity
     });
 
     this.starPoints = new THREE.Points(geometry, material);
@@ -359,15 +354,13 @@ class SkySystem {
       this.moonGroup.position.y = this.baseMoonY + Math.sin(elapsed * 0.4) * 0.12;
     }
 
-    // 2. Twinkling Stars
+    // 2. Twinkling Stars. PointsMaterial uses one uniform size for all
+    // vertices; a restrained material-opacity twinkle avoids an invalid
+    // per-vertex size attribute and a per-frame GPU buffer upload.
     if (this.starPoints) {
-      const sizes = this.starPoints.geometry.attributes.size.array;
-      for (let i = 0; i < sizes.length; i++) {
-        const freq = this.starFrequencies[i];
-        const phase = this.starPhases[i];
-        sizes[i] = 1.0 + Math.sin(elapsed * freq + phase) * 0.6;
-      }
-      this.starPoints.geometry.attributes.size.needsUpdate = true;
+      this.starPoints.material.opacity = this.starBaseOpacity +
+        Math.sin(elapsed * 0.45) * 0.035 +
+        Math.sin(elapsed * 0.19 + 1.7) * 0.02;
     }
 
     // 3. Drifting Clouds

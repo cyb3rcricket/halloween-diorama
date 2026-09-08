@@ -11,17 +11,23 @@ class CuteGhost {
     this.group = new THREE.Group();
     this.clickableMeshes = [];
 
-    // Animation & Floating states
+    // Animation, Floating, & Hover states
     this.animTime = 0;
     this.isReacting = false;
     this.reactionProgress = 0;
     this.basePosition = new THREE.Vector3(2.4, 2.3, 1.8);
+    this.hoverAmount = 0;
+    this.targetHoverAmount = 0;
 
     this.initMaterials();
     this.buildGhostModel();
     this.positionGhost();
 
     this.scene.add(this.group);
+  }
+
+  setHovered(isHovered) {
+    this.targetHoverAmount = isHovered ? 1.0 : 0.0;
   }
 
   initMaterials() {
@@ -234,6 +240,8 @@ class CuteGhost {
 
     this.leftArm = createArm(true);
     this.rightArm = createArm(false);
+    this.leftArmBaseRotationX = this.leftArm.rotation.x;
+    this.rightArmBaseRotationX = this.rightArm.rotation.x;
     this.bodyGroup.add(this.leftArm);
     this.bodyGroup.add(this.rightArm);
 
@@ -390,6 +398,13 @@ class CuteGhost {
   update(delta, elapsed) {
     this.animTime += delta;
 
+    // Hover response: gentle rise (+0.08 units) and emissive intensity boost (~12%)
+    this.hoverAmount += (this.targetHoverAmount - this.hoverAmount) * Math.min(1, delta * 6.0);
+    const hoverLift = this.hoverAmount * 0.08;
+    if (this.ghostMat) {
+      this.ghostMat.emissiveIntensity = 0.72 * (1.0 + this.hoverAmount * 0.12);
+    }
+
     // 1. Weightless Floating Idle: Vertical bobbing, lateral figure-8 drift, tilt
     const bob = Math.sin(this.animTime * 1.8) * 0.22;
     const driftX = Math.sin(this.animTime * 0.9) * 0.18;
@@ -397,7 +412,7 @@ class CuteGhost {
     const bankZ = Math.cos(this.animTime * 1.8) * 0.08;
     const pitchX = Math.sin(this.animTime * 1.4) * 0.04;
 
-    this.group.position.y = this.basePosition.y + bob;
+    this.group.position.y = this.basePosition.y + bob + hoverLift;
     this.group.position.x = this.basePosition.x + driftX;
     this.group.position.z = this.basePosition.z + driftZ;
 
@@ -417,17 +432,18 @@ class CuteGhost {
 
         // Bounce up high
         const jumpY = Math.sin(this.reactionProgress * Math.PI) * 0.55;
-        this.group.position.y = this.basePosition.y + bob + jumpY;
+        this.group.position.y = this.basePosition.y + bob + hoverLift + jumpY;
 
         // Arm flutter
-        this.leftArm.rotation.x = Math.sin(this.reactionProgress * Math.PI * 8) * 0.4;
-        this.rightArm.rotation.x = Math.sin(this.reactionProgress * Math.PI * 8) * 0.4;
+        const armFlutter = Math.sin(this.reactionProgress * Math.PI * 8) * 0.4;
+        this.leftArm.rotation.x = this.leftArmBaseRotationX + armFlutter;
+        this.rightArm.rotation.x = this.rightArmBaseRotationX + armFlutter;
       } else {
         this.isReacting = false;
         this.reactionProgress = 0;
         this.bodyGroup.rotation.y = 0;
-        this.leftArm.rotation.x = 0;
-        this.rightArm.rotation.x = 0;
+        this.leftArm.rotation.x = this.leftArmBaseRotationX;
+        this.rightArm.rotation.x = this.rightArmBaseRotationX;
       }
     } else {
       this.bodyGroup.rotation.z = bankZ;

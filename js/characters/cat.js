@@ -10,18 +10,25 @@ class CuteCat {
     this.group = new THREE.Group();
     this.clickableMeshes = [];
 
-    // Animation states
+    // Animation & hover states
     this.animTime = 0;
     this.isReacting = false;
     this.reactionProgress = 0;
     this.earTwitchTimer = 0;
     this.currentEarTwitch = 0;
+    this.hoverAmount = 0;
+    this.targetHoverAmount = 0;
+    this.catchlights = [];
 
     this.initMaterials();
     this.buildCatModel();
     this.positionCat();
 
     this.scene.add(this.group);
+  }
+
+  setHovered(isHovered) {
+    this.targetHoverAmount = isHovered ? 1.0 : 0.0;
   }
 
   initMaterials() {
@@ -387,6 +394,8 @@ class CuteCat {
       smallCatch.position.set(0.065, -0.065, 0.16);
       eyeGroup.add(smallCatch);
 
+      this.catchlights.push(bigCatch, smallCatch);
+
       // Eye placement on face (Angled slightly outward for chibi kitten appeal)
       eyeGroup.position.set(sign * 0.31, 0.07, 0.55);
       eyeGroup.rotation.y = sign * 0.16;
@@ -501,6 +510,7 @@ class CuteCat {
   positionCat() {
     // Perched in foreground planted neatly on grassy mound
     this.group.position.set(-0.95, 0.46, 3.2);
+    this.baseY = this.group.position.y;
     this.group.rotation.y = 0.2;
     this.group.scale.setScalar(1.08);
   }
@@ -529,6 +539,17 @@ class CuteCat {
     this.tailGroup.rotation.y = tailSway;
     this.tailGroup.rotation.z = tailLift;
 
+    // Hover response: smooth ear perk (~2.5 deg) and catchlight sparkle
+    this.hoverAmount += (this.targetHoverAmount - this.hoverAmount) * Math.min(1, delta * 7.0);
+    const hoverEarPerk = this.hoverAmount * 0.045;
+
+    if (this.catchlights.length > 0) {
+      const catchScale = 1.0 + this.hoverAmount * 0.22;
+      for (let i = 0; i < this.catchlights.length; i++) {
+        this.catchlights[i].scale.setScalar(catchScale);
+      }
+    }
+
     // 3. Periodic Ear Twitch
     this.earTwitchTimer += delta;
     if (this.earTwitchTimer > 4.2) {
@@ -539,15 +560,18 @@ class CuteCat {
     if (this.currentEarTwitch > 0) {
       const twitch = Math.sin(this.earTwitchTimer * 28) * 0.18;
       if (this.currentEarTwitch === 1) {
-        this.leftEar.rotation.z = -0.12 + twitch;
+        this.leftEar.rotation.z = -0.12 - hoverEarPerk + twitch;
       } else {
-        this.rightEar.rotation.z = 0.12 - twitch;
+        this.rightEar.rotation.z = 0.12 + hoverEarPerk - twitch;
       }
       if (this.earTwitchTimer > 0.4) {
         this.currentEarTwitch = 0;
-        this.leftEar.rotation.z = -0.12;
-        this.rightEar.rotation.z = 0.12;
+        this.leftEar.rotation.z = -0.12 - hoverEarPerk;
+        this.rightEar.rotation.z = 0.12 + hoverEarPerk;
       }
+    } else if (!this.isReacting) {
+      this.leftEar.rotation.z = -0.12 - hoverEarPerk;
+      this.rightEar.rotation.z = 0.12 + hoverEarPerk;
     }
 
     // 4. Subtle Curious Head Tilt
@@ -564,19 +588,19 @@ class CuteCat {
       if (this.reactionProgress <= 1.0) {
         // Joyful perk-up hop & head tilt
         const jumpY = Math.sin(this.reactionProgress * Math.PI) * 0.32;
-        this.group.position.y = 0.68 + jumpY;
+        this.group.position.y = this.baseY + jumpY;
 
         const perk = Math.sin(this.reactionProgress * Math.PI);
         this.headGroup.rotation.z = headTilt + perk * 0.25;
-        this.leftEar.rotation.z = -0.12 - perk * 0.18;
-        this.rightEar.rotation.z = 0.12 + perk * 0.18;
+        this.leftEar.rotation.z = -0.12 - hoverEarPerk - perk * 0.18;
+        this.rightEar.rotation.z = 0.12 + hoverEarPerk + perk * 0.18;
         this.tailGroup.rotation.y = tailSway + Math.sin(this.reactionProgress * Math.PI * 4) * 0.45;
       } else {
         this.isReacting = false;
         this.reactionProgress = 0;
-        this.group.position.y = 0.68;
-        this.leftEar.rotation.z = -0.12;
-        this.rightEar.rotation.z = 0.12;
+        this.group.position.y = this.baseY;
+        this.leftEar.rotation.z = -0.12 - hoverEarPerk;
+        this.rightEar.rotation.z = 0.12 + hoverEarPerk;
       }
     }
   }

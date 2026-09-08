@@ -6,6 +6,7 @@ class SparkleSystem {
   constructor(scene) {
     this.scene = scene;
     this.bursts = [];
+    this.burstTexture = this.createParticleTexture(true);
 
     this.createAmbientFireflies();
   }
@@ -105,7 +106,7 @@ class SparkleSystem {
 
     const mat = new THREE.PointsMaterial({
       size: 0.42,
-      map: this.createParticleTexture(true),
+      map: this.burstTexture,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,

@@ -15,6 +15,7 @@ class InteractionManager {
     this.cameraMode = 'parallax'; // 'parallax' or 'orbit'
     this.isPointerDown = false;
     this.pointerStartPos = { x: 0, y: 0 };
+    this.currentHoveredTarget = null;
 
     this.initDOM();
     this.initEvents();
@@ -33,6 +34,12 @@ class InteractionManager {
       } else if (testTarget === 'ghost' && this.app.ghost) {
         this.app.ghost.triggerInteraction();
         this.showToast('Boo! Friendly Ghost! 👻', window.innerWidth * 0.65, window.innerHeight * 0.48);
+      } else if ((testTarget === 'lantern' || testTarget === 'tree') && this.app.lighting) {
+        this.app.lighting.triggerLanternFlare();
+        if (this.app.environment && typeof this.app.environment.triggerLanternFlare === 'function') {
+          this.app.environment.triggerLanternFlare();
+        }
+        this.showToast('Spooky Glow! 🕯️', window.innerWidth * 0.35, window.innerHeight * 0.45);
       }
     }, 400);
   }
@@ -111,27 +118,65 @@ class InteractionManager {
   }
 
   resetCamera() {
+    const frame = this.app.cameraFrame;
     if (this.app.orbitControls) {
       this.app.orbitControls.reset();
-      this.app.orbitControls.target.set(0, 4.0, 0);
+      this.app.orbitControls.target.copy(frame.target);
+      this.app.orbitControls.update();
     }
-    this.app.camera.position.set(0, 4.4, 16.0);
+    this.app.camera.position.copy(frame.basePosition);
+    this.app.camera.lookAt(frame.target);
     this.targetCameraOffset.x = 0;
     this.targetCameraOffset.y = 0;
     this.currentCameraOffset.x = 0;
     this.currentCameraOffset.y = 0;
   }
 
+  rebaseCameraFrame() {
+    const frame = this.app.cameraFrame;
+    if (!frame || !this.app.camera) return;
+
+    this.targetCameraOffset.x = 0;
+    this.targetCameraOffset.y = 0;
+    this.currentCameraOffset.x = 0;
+    this.currentCameraOffset.y = 0;
+    this.app.camera.position.copy(frame.basePosition);
+    this.app.camera.lookAt(frame.target);
+
+    if (this.app.orbitControls) {
+      this.app.orbitControls.target.copy(frame.target);
+      this.app.orbitControls.update();
+      this.app.orbitControls.saveState();
+    }
+  }
+
   initEvents() {
     window.addEventListener('pointermove', (e) => this.onPointerMove(e));
     window.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    window.addEventListener('pointercancel', (e) => this.onPointerCancel(e));
+    window.addEventListener('mouseleave', () => this.clearHoverState());
   }
 
   onPointerMove(e) {
+    this.updatePointerCoordinates(e);
+
+    // Touch guard: mobile taps should never get stuck in hover state.
+    // Also ignore hover while dragging camera / orbit.
+    if (e.pointerType === 'touch' || this.isPointerDown) {
+      this.clearHoverState();
+      return;
+    }
+
+    this.checkHover();
+  }
+
+  updatePointerCoordinates(e, updateParallax = true) {
     // Normalized device coordinates (-1 to +1)
     this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    if (!updateParallax) return;
 
     // Smoothed parallax targets
     this.mouseNorm.x = (e.clientX / window.innerWidth) - 0.5;
@@ -146,10 +191,23 @@ class InteractionManager {
   onPointerDown(e) {
     this.isPointerDown = true;
     this.pointerStartPos = { x: e.clientX, y: e.clientY };
+    // Immediately clear any active hover on touch / click down
+    this.clearHoverState();
+  }
+
+  onPointerCancel(e) {
+    this.isPointerDown = false;
+    this.clearHoverState();
   }
 
   onPointerUp(e) {
     this.isPointerDown = false;
+
+    // Touch guard: ensure mobile touch completion leaves no stuck hover
+    if (e.pointerType === 'touch') {
+      this.clearHoverState();
+    }
+
     const dist = Math.hypot(e.clientX - this.pointerStartPos.x, e.clientY - this.pointerStartPos.y);
 
     // Only trigger click raycast if it was a distinct tap/click without drag
@@ -158,8 +216,80 @@ class InteractionManager {
     }
   }
 
+  getInteractiveTargets() {
+    const targets = [];
+    if (this.app.cat && this.app.cat.clickableMeshes) {
+      targets.push(...this.app.cat.clickableMeshes);
+    }
+    if (this.app.ghost && this.app.ghost.clickableMeshes) {
+      targets.push(...this.app.ghost.clickableMeshes);
+    }
+    if (this.app.environment && this.app.environment.clickableLanterns) {
+      targets.push(...this.app.environment.clickableLanterns);
+    }
+    return targets;
+  }
+
+  checkHover() {
+    if (!this.app.camera || !this.app.scene) return;
+
+    this.raycaster.setFromCamera(this.mouse, this.app.camera);
+    const targets = this.getInteractiveTargets();
+    const intersects = this.raycaster.intersectObjects(targets, true);
+
+    let hovered = null;
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      const obj = hit.object;
+
+      if (obj.userData.isCat || (obj.parent && obj.parent.userData.isCat)) {
+        hovered = 'cat';
+      } else if (obj.userData.isGhost || (obj.parent && obj.parent.userData.isGhost)) {
+        hovered = 'ghost';
+      } else if (obj.userData.isLantern || (obj.parent && obj.parent.userData.isLantern)) {
+        hovered = 'lantern';
+      }
+    }
+
+    this.setHoveredTarget(hovered);
+  }
+
+  setHoveredTarget(target) {
+    if (this.currentHoveredTarget === target) return;
+    this.currentHoveredTarget = target;
+
+    // Cursor management: indicate interactive target or restore default grab/default
+    const hasHover = Boolean(target);
+    const cursor = hasHover ? 'pointer' : '';
+    document.body.style.cursor = cursor;
+    if (this.app.container) {
+      this.app.container.style.cursor = cursor;
+    }
+
+    // Notify individual target modules of subtle hover state
+    if (this.app.cat && typeof this.app.cat.setHovered === 'function') {
+      this.app.cat.setHovered(target === 'cat');
+    }
+    if (this.app.ghost && typeof this.app.ghost.setHovered === 'function') {
+      this.app.ghost.setHovered(target === 'ghost');
+    }
+    if (this.app.environment && typeof this.app.environment.setLanternHovered === 'function') {
+      this.app.environment.setLanternHovered(target === 'lantern');
+    }
+  }
+
+  clearHoverState() {
+    this.setHoveredTarget(null);
+  }
+
   performRaycastClick(e) {
     if (!this.app.camera || !this.app.scene) return;
+
+    // Pointerup can be the first pointer event at this location (especially on
+    // touch), so do not depend on a prior pointermove to seed the raycaster.
+    // Keep this independent of parallax targets so clicks do not change camera
+    // behavior.
+    this.updatePointerCoordinates(e, false);
 
     // First ensure audio context can resume on interaction
     if (window.soundManager) {
@@ -168,18 +298,7 @@ class InteractionManager {
 
     this.raycaster.setFromCamera(this.mouse, this.app.camera);
 
-    // Click targets list
-    const clickTargets = [];
-    if (this.app.cat && this.app.cat.clickableMeshes) {
-      clickTargets.push(...this.app.cat.clickableMeshes);
-    }
-    if (this.app.ghost && this.app.ghost.clickableMeshes) {
-      clickTargets.push(...this.app.ghost.clickableMeshes);
-    }
-    if (this.app.environment && this.app.environment.clickableLanterns) {
-      clickTargets.push(...this.app.environment.clickableLanterns);
-    }
-
+    const clickTargets = this.getInteractiveTargets();
     const intersects = this.raycaster.intersectObjects(clickTargets, true);
 
     if (intersects.length > 0) {
@@ -213,8 +332,11 @@ class InteractionManager {
         if (window.soundManager) {
           window.soundManager.playLanternGlow();
         }
-        if (this.app.lighting && this.app.lighting.treeLanternLight) {
-          this.app.lighting.treeLanternLight.intensity = 4.5;
+        if (this.app.lighting) {
+          this.app.lighting.triggerLanternFlare();
+        }
+        if (this.app.environment && typeof this.app.environment.triggerLanternFlare === 'function') {
+          this.app.environment.triggerLanternFlare();
         }
         this.app.sparkles.spawnBurst(hit.point, 0xffbb33, 20);
         this.showToast('Spooky Glow! 🕯️', e.clientX, e.clientY);
@@ -250,10 +372,12 @@ class InteractionManager {
       this.currentCameraOffset.x += (this.targetCameraOffset.x - this.currentCameraOffset.x) * 0.05;
       this.currentCameraOffset.y += (this.targetCameraOffset.y - this.currentCameraOffset.y) * 0.05;
 
-      const basePos = { x: 0, y: 4.4, z: 16.0 };
+      const basePos = this.app.cameraFrame.basePosition;
+      const target = this.app.cameraFrame.target;
       this.app.camera.position.x = basePos.x + this.currentCameraOffset.x;
       this.app.camera.position.y = basePos.y + this.currentCameraOffset.y;
-      this.app.camera.lookAt(0, 4.0, 0);
+      this.app.camera.position.z = basePos.z;
+      this.app.camera.lookAt(target);
     }
   }
 }
